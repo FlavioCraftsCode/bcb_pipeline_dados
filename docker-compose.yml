@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  postgres_dw:
+    image: postgres:15-alpine
+    container_name: bcb_data_warehouse
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: securepassword
+      POSTGRES_DB: bcb_dw
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
