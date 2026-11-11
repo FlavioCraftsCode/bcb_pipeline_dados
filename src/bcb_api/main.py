@@ -22,6 +22,8 @@ from bcb_pipeline import __version__, consultas
 from bcb_pipeline.banco import obter_engine
 from bcb_pipeline.config import SERIES_POR_SLUG
 
+from . import schemas
+
 app = FastAPI(
     title="BCB Data Warehouse API",
     version=__version__,
@@ -38,7 +40,7 @@ def _engine():
     return obter_engine()
 
 
-@app.get("/api/saude", tags=["operação"], summary="Verifica banco e última execução")
+@app.get("/api/saude", tags=["operação"], summary="Verifica banco e última execução", response_model=schemas.Saude)
 def saude():
     return consultas.saude(_engine())
 
@@ -74,12 +76,22 @@ def previsao():
     return consultas.previsao(_engine())
 
 
-@app.get("/api/qualidade", tags=["operação"], summary="Resultados de qualidade da última execução")
+@app.get(
+    "/api/qualidade",
+    tags=["operação"],
+    summary="Resultados de qualidade da última execução",
+    response_model=schemas.Qualidade,
+)
 def qualidade():
     return consultas.qualidade(_engine())
 
 
-@app.get("/api/execucoes", tags=["operação"], summary="Histórico de execuções da pipeline")
+@app.get(
+    "/api/execucoes",
+    tags=["operação"],
+    summary="Histórico de execuções da pipeline",
+    response_model=schemas.Execucoes,
+)
 def execucoes(limite: int = Query(20, ge=1, le=200)):
     return consultas.execucoes(_engine(), limite)
 

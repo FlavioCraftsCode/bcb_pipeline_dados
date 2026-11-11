@@ -1,11 +1,18 @@
 """Camada de qualidade de dados.
 
-Cada checagem devolve um :class:`ResultadoCheck` com severidade:
+Cada checagem devolve um :class:`ResultadoCheck` com severidade
+(ver :mod:`bcb_pipeline.status`):
 
-* ``ok``     — passou;
-* ``alerta`` — anomalia registrada, mas a carga segue (ex.: outlier estatístico);
-* ``falha``  — dado não confiável; a série **não** é carregada nesta execução
-               (fica em quarentena e o histórico já carregado é preservado).
+* ``ok``          — checagem aprovada;
+* ``informativo`` — anomalia registrada para observabilidade; a carga segue
+                    (ex.: outlier estatístico, atraso de divulgação da fonte);
+* ``bloqueante``  — o lote viola uma regra de integridade e é barrado na origem.
+                    O Circuito de Proteção de Dados isola a série em quarentena e
+                    o histórico já carregado no Data Warehouse é preservado.
+
+Checagens bloqueantes: ``nao_vazio`` (carga completa), ``sem_nulos``,
+``sem_duplicados``, ``faixa_valida`` e ``reconciliacao_ipca_12m``.
+Checagens informativas: ``atualidade``, ``sem_lacunas`` e ``outliers``.
 
 Os resultados são persistidos em ``dq_resultados`` e exibidos no painel.
 """
@@ -14,18 +21,12 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import date
-from enum import Enum
 
 import numpy as np
 import pandas as pd
 
 from .config import Periodicidade, Serie
-
-
-class Status(str, Enum):
-    OK = "ok"
-    ALERTA = "alerta"
-    FALHA = "falha"
+from .status import StatusCheck as Status
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,10 @@ def _br(v: float, casas: int = 2) -> str:
     return f"{v:,.{casas}f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def _n(n: int, um: str, varios: str) -> str:
+    return f"{n} {um if n == 1 else varios}"
+
+
 def _r(serie: Serie, nome: str, status: Status, detalhe: str, valor: float | None = None) -> ResultadoCheck:
     return ResultadoCheck(serie.codigo, nome, status, detalhe, None if valor is None else float(valor))
 
@@ -55,9 +60,9 @@ def _r(serie: Serie, nome: str, status: Status, detalhe: str, valor: float | Non
 def check_nao_vazio(df: pd.DataFrame, serie: Serie, incremental: bool) -> ResultadoCheck:
     n = len(df)
     if n > 0:
-        return _r(serie, "nao_vazio", Status.OK, f"{n} linhas recebidas", n)
+        return _r(serie, "nao_vazio", Status.OK, _n(n, "linha recebida", "linhas recebidas"), n)
     # Em carga incremental, "nada novo" é normal (ex.: série mensal no meio do mês).
-    status = Status.OK if incremental else Status.FALHA
+    status = Status.OK if incremental else Status.BLOQUEANTE
     return _r(serie, "nao_vazio", status, "Nenhuma linha recebida da API", 0)
 
 
@@ -65,14 +70,20 @@ def check_nulos(df: pd.DataFrame, serie: Serie) -> ResultadoCheck:
     nulos = int(df["data"].isna().sum() + df["valor"].isna().sum())
     if nulos == 0:
         return _r(serie, "sem_nulos", Status.OK, "Nenhum valor ou data inválida", 0)
-    return _r(serie, "sem_nulos", Status.FALHA, f"{nulos} datas/valores não convertidos", nulos)
+    return _r(
+        serie,
+        "sem_nulos",
+        Status.BLOQUEANTE,
+        _n(nulos, "data/valor não convertido", "datas/valores não convertidos"),
+        nulos,
+    )
 
 
 def check_duplicados(df: pd.DataFrame, serie: Serie) -> ResultadoCheck:
     dup = int(df["data"].duplicated().sum())
     if dup == 0:
         return _r(serie, "sem_duplicados", Status.OK, "Uma observação por data", 0)
-    return _r(serie, "sem_duplicados", Status.FALHA, f"{dup} datas repetidas", dup)
+    return _r(serie, "sem_duplicados", Status.BLOQUEANTE, _n(dup, "data repetida", "datas repetidas"), dup)
 
 
 def check_faixa(df: pd.DataFrame, serie: Serie) -> ResultadoCheck:
@@ -84,8 +95,8 @@ def check_faixa(df: pd.DataFrame, serie: Serie) -> ResultadoCheck:
     return _r(
         serie,
         "faixa_valida",
-        Status.FALHA,
-        f"{len(fora)} valores fora de {_br(lo, 0)} a {_br(hi, 0)}"
+        Status.BLOQUEANTE,
+        f"{_n(len(fora), 'valor', 'valores')} fora de {_br(lo, 0)} a {_br(hi, 0)}"
         f" (ex.: {_br(exemplo['valor'])} em {exemplo['data']:%d/%m/%Y})",
         len(fora),
     )
@@ -93,12 +104,14 @@ def check_faixa(df: pd.DataFrame, serie: Serie) -> ResultadoCheck:
 
 def check_atualidade(ultima_data: date | None, serie: Serie, hoje: date) -> ResultadoCheck:
     if ultima_data is None:
-        return _r(serie, "atualidade", Status.FALHA, "Série sem nenhuma observação")
+        return _r(serie, "atualidade", Status.BLOQUEANTE, "Série sem nenhuma observação")
     atraso = (hoje - ultima_data).days
     limite = serie.atraso_maximo_dias
     if atraso <= limite:
         return _r(serie, "atualidade", Status.OK, f"Último dado há {atraso} dias (limite {limite})", atraso)
-    return _r(serie, "atualidade", Status.ALERTA, f"Último dado há {atraso} dias — acima do limite de {limite}", atraso)
+    return _r(
+        serie, "atualidade", Status.INFORMATIVO, f"Último dado há {atraso} dias — acima do limite de {limite}", atraso
+    )
 
 
 def check_lacunas_mensais(df: pd.DataFrame, serie: Serie) -> ResultadoCheck:
@@ -112,8 +125,8 @@ def check_lacunas_mensais(df: pd.DataFrame, serie: Serie) -> ResultadoCheck:
     return _r(
         serie,
         "sem_lacunas",
-        Status.ALERTA,
-        f"{len(faltando)} meses ausentes (ex.: {faltando[0].strftime('%m/%Y')})",
+        Status.INFORMATIVO,
+        f"{_n(len(faltando), 'mês ausente', 'meses ausentes')} (ex.: {faltando[0].strftime('%m/%Y')})",
         len(faltando),
     )
 
@@ -139,7 +152,13 @@ def check_outliers(df: pd.DataFrame, serie: Serie, limiar: float = 8.0) -> Resul
     zmax = float(z.max())
     if n == 0:
         return _r(serie, "outliers", Status.OK, f"Nenhuma variação recente com |z| acima de {_br(limiar, 0)}", zmax)
-    return _r(serie, "outliers", Status.ALERTA, f"{n} variações recentes com |z| acima de {_br(limiar, 0)}", zmax)
+    return _r(
+        serie,
+        "outliers",
+        Status.INFORMATIVO,
+        f"{_n(n, 'variação recente', 'variações recentes')} com |z| acima de {_br(limiar, 0)}",
+        zmax,
+    )
 
 
 def check_reconciliacao_ipca(
@@ -157,7 +176,7 @@ def check_reconciliacao_ipca(
     comum = calc.index.intersection(ofi.index)
     comum = comum[comum >= pd.Timestamp("2000-01-01")]  # pós-Real: arredondamento estável
     if len(comum) == 0:
-        return _r(serie_ref, "reconciliacao_ipca_12m", Status.ALERTA, "Sem períodos em comum para comparar")
+        return _r(serie_ref, "reconciliacao_ipca_12m", Status.INFORMATIVO, "Sem períodos em comum para comparar")
     diff = (calc.loc[comum] - ofi.loc[comum]).abs()
     pior = float(diff.max())
     if pior <= tolerancia_pp:
@@ -165,14 +184,14 @@ def check_reconciliacao_ipca(
             serie_ref,
             "reconciliacao_ipca_12m",
             Status.OK,
-            f"{len(comum)} meses conferidos; maior diferença de {_br(pior, 3)} p.p.",
+            f"{_n(len(comum), 'mês conferido', 'meses conferidos')}; maior diferença de {_br(pior, 3)} p.p.",
             pior,
         )
     data_pior = diff.idxmax()
     return _r(
         serie_ref,
         "reconciliacao_ipca_12m",
-        Status.FALHA,
+        Status.BLOQUEANTE,
         f"Acumulado calculado diverge do oficial em {_br(pior, 3)} p.p. ({data_pior:%m/%Y})",
         pior,
     )
@@ -207,4 +226,4 @@ def validar_lote(
 
 
 def lote_aprovado(resultados: list[ResultadoCheck]) -> bool:
-    return not any(r.status is Status.FALHA for r in resultados)
+    return not any(r.status is Status.BLOQUEANTE for r in resultados)

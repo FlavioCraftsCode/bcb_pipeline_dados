@@ -218,8 +218,8 @@ def qualidade(engine: Engine) -> dict:
             text(
                 "SELECT id_execucao, "
                 "count(*) FILTER (WHERE status = 'ok') AS ok, "
-                "count(*) FILTER (WHERE status = 'alerta') AS alerta, "
-                "count(*) FILTER (WHERE status = 'falha') AS falha "
+                "count(*) FILTER (WHERE status = 'informativo') AS informativo, "
+                "count(*) FILTER (WHERE status = 'bloqueante') AS bloqueante "
                 "FROM dq_resultados GROUP BY id_execucao ORDER BY id_execucao DESC LIMIT 30"
             ),
             conn,

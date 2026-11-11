@@ -1,8 +1,11 @@
 """Orquestração da pipeline: extração -> transformação -> qualidade -> carga -> previsão.
 
-Falhas são isoladas por série: um indicador fora do ar ou reprovado na
-qualidade não impede a carga dos demais. A execução termina como ``sucesso``,
-``parcial`` ou ``falha`` e tudo fica registrado em ``etl_execucoes``.
+Circuito de Proteção de Dados: cada série é processada de forma isolada. Um
+lote reprovado por uma checagem bloqueante vai para quarentena e uma fonte
+indisponível interrompe apenas aquela série; as demais seguem para o Data
+Warehouse. A execução termina como ``sucesso``, ``concluido_com_isolamento``
+ou ``interrompida`` (ver :mod:`bcb_pipeline.status`) e tudo fica registrado em
+``etl_execucoes``.
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ from .config import SERIES, Serie, serie
 from .extracao import ClienteSGS, data_inicio_incremental
 from .previsao import prever_ipca
 from .qualidade import check_reconciliacao_ipca, lote_aprovado, validar_lote
+from .status import StatusCheck, StatusExecucao, StatusSerie, status_da_execucao
 from .transformacao import transformar
 
 log = logging.getLogger(__name__)
@@ -28,8 +32,8 @@ log = logging.getLogger(__name__)
 @dataclass
 class ResumoExecucao:
     id_execucao: int
-    status: str
-    por_serie: dict[str, str] = field(default_factory=dict)
+    status: StatusExecucao
+    por_serie: dict[str, StatusSerie] = field(default_factory=dict)
     linhas_extraidas: int = 0
     linhas_inseridas: int = 0
     linhas_revisadas: int = 0
@@ -40,7 +44,7 @@ def _processar_serie(engine: Engine, cliente: ClienteSGS, s: Serie, completo: bo
     registro = {
         "id_execucao": id_execucao,
         "codigo_bcb": s.codigo,
-        "status": "falha",
+        "status": StatusSerie.INTERROMPIDA,
         "desde": None,
         "linhas_extraidas": 0,
         "linhas_inseridas": 0,
@@ -62,18 +66,18 @@ def _processar_serie(engine: Engine, cliente: ClienteSGS, s: Serie, completo: bo
         carga.registrar_qualidade(engine, id_execucao, resultados)
 
         if not lote_aprovado(resultados):
-            registro["status"] = "quarentena"
-            registro["erro"] = "; ".join(r.detalhe for r in resultados if r.status.value == "falha")
-            log.error("[%s] lote reprovado na qualidade: %s", s.codigo, registro["erro"])
+            registro["status"] = StatusSerie.QUARENTENA
+            registro["erro"] = "; ".join(r.detalhe for r in resultados if r.status is StatusCheck.BLOQUEANTE)
+            log.warning("[%s] lote isolado em quarentena (checagem bloqueante): %s", s.codigo, registro["erro"])
         else:
             r = carga.gravar_observacoes(engine, df.dropna(), id_execucao)
-            registro.update(status="sucesso", linhas_inseridas=r.inseridas, linhas_revisadas=r.revisadas)
+            registro.update(status=StatusSerie.SUCESSO, linhas_inseridas=r.inseridas, linhas_revisadas=r.revisadas)
             log.info("[%s] %d novas, %d revisadas", s.codigo, r.inseridas, r.revisadas)
     except Exception as exc:  # isolamento por série
         registro["erro"] = f"{type(exc).__name__}: {exc}"[:2000]
-        log.exception("[%s] falha na série", s.codigo)
+        log.exception("[%s] série interrompida", s.codigo)
     registro["duracao_ms"] = int((time.perf_counter() - inicio) * 1000)
-    carga.registrar_serie(engine, **registro)
+    carga.registrar_serie(engine, **{**registro, "status": registro["status"].value})
     return registro
 
 
@@ -120,7 +124,7 @@ def executar(
     carga.sincronizar_indicadores(engine)
 
     id_execucao = carga.iniciar_execucao(engine, modo, gatilho)
-    resumo = ResumoExecucao(id_execucao=id_execucao, status="executando")
+    resumo = ResumoExecucao(id_execucao=id_execucao, status=StatusExecucao.EXECUTANDO)
     log.info("Execução #%d iniciada (%s, %d séries)", id_execucao, modo, len(selecionadas))
 
     erro_geral = None
@@ -133,38 +137,31 @@ def executar(
             resumo.linhas_revisadas += reg["linhas_revisadas"]
 
         _reconciliar_ipca(engine, id_execucao)
-        if com_previsao and resumo.por_serie.get("433") == "sucesso":
+        if com_previsao and resumo.por_serie.get("433") is StatusSerie.SUCESSO:
             try:
                 _atualizar_previsao(engine)
             except Exception:
-                log.exception("Falha ao gerar previsão (dados carregados normalmente)")
+                log.exception("Previsão não atualizada (dados carregados normalmente)")
     except Exception as exc:
         erro_geral = f"{type(exc).__name__}: {exc}"
-        log.exception("Execução abortada")
+        log.exception("Execução interrompida")
 
-    sucessos = sum(1 for v in resumo.por_serie.values() if v == "sucesso")
-    if erro_geral or sucessos == 0:
-        resumo.status = "falha"
-    elif sucessos == len(selecionadas):
-        resumo.status = "sucesso"
-    else:
-        resumo.status = "parcial"
-
-    falhas = [f"{c}: {v}" for c, v in resumo.por_serie.items() if v != "sucesso"]
+    resumo.status = status_da_execucao(resumo.por_serie, erro_geral)
+    isoladas = [f"{c}: {v.value}" for c, v in resumo.por_serie.items() if v is not StatusSerie.SUCESSO]
     carga.finalizar_execucao(
         engine,
         id_execucao,
-        status=resumo.status,
+        status=resumo.status.value,
         linhas_extraidas=resumo.linhas_extraidas,
         linhas_inseridas=resumo.linhas_inseridas,
         linhas_revisadas=resumo.linhas_revisadas,
         requisicoes_http=cliente.estatisticas.requisicoes,
-        erro=erro_geral or ("; ".join(falhas) or None),
+        erro=erro_geral or ("; ".join(isoladas) or None),
     )
     log.info(
         "Execução #%d: %s — %d extraídas, %d novas, %d revisadas",
         id_execucao,
-        resumo.status,
+        resumo.status.value,
         resumo.linhas_extraidas,
         resumo.linhas_inseridas,
         resumo.linhas_revisadas,
