@@ -51,7 +51,7 @@ def test_retry_em_erro_transitorio_e_sucesso(sessao_falsa):
     assert cliente.estatisticas.tentativas_extras == 2
 
 
-def test_erro_definitivo_falha_sem_retry(sessao_falsa):
+def test_erro_definitivo_nao_faz_retry(sessao_falsa):
     sessao = sessao_falsa([RespostaFalsa(406, texto="janela maior que 10 anos")])
     cliente = ClienteSGS(CFG, sessao=sessao, dormir=lambda _: None)
     with pytest.raises(ErroExtracao, match="406"):

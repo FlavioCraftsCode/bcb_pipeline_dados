@@ -52,43 +52,43 @@ def test_lote_valido_e_aprovado(ipca_mensal):
     assert lote_aprovado(res), [r for r in res if r.status is not Status.OK]
 
 
-def test_valor_fora_da_faixa_reprova_lote():
+def test_valor_fora_da_faixa_bloqueia_lote():
     df = transformar(_bruto([("01/01/2026", "0.16"), ("01/02/2026", "160.0")]), serie("ipca"))
     res = validar_lote(df, serie("ipca"), incremental=True, hoje=date(2026, 3, 1))
-    falhas = [r.checagem for r in res if r.status is Status.FALHA]
-    assert falhas == ["faixa_valida"] and not lote_aprovado(res)
+    bloqueantes = [r.checagem for r in res if r.status is Status.BLOQUEANTE]
+    assert bloqueantes == ["faixa_valida"] and not lote_aprovado(res)
 
 
-def test_valor_nao_numerico_reprova_lote():
+def test_valor_nao_numerico_bloqueia_lote():
     df = transformar(_bruto([("01/01/2026", "abc")]), serie("ipca"))
     res = validar_lote(df, serie("ipca"), incremental=True, hoje=date(2026, 2, 1))
-    assert "sem_nulos" in [r.checagem for r in res if r.status is Status.FALHA]
+    assert "sem_nulos" in [r.checagem for r in res if r.status is Status.BLOQUEANTE]
 
 
-def test_incremental_sem_dados_novos_nao_e_falha():
+def test_incremental_sem_dados_novos_nao_e_bloqueante():
     df = transformar(pd.DataFrame(columns=["data", "valor"]), serie("ipca"))
     hist = pd.DataFrame({"data": [pd.Timestamp("2026-09-01")], "valor": [0.4]})
     res = validar_lote(df, serie("ipca"), incremental=True, historico=hist, hoje=date(2026, 10, 20))
     assert lote_aprovado(res)
 
 
-def test_atualidade_vira_alerta_quando_atrasada():
+def test_atualidade_e_informativa_quando_atrasada():
     r = check_atualidade(date(2026, 1, 1), serie("selic"), date(2026, 1, 20))
-    assert r.status is Status.ALERTA and r.valor_observado == 19
+    assert r.status is Status.INFORMATIVO and r.valor_observado == 19
 
 
 def test_lacuna_mensal_detectada(ipca_mensal):
     s = ipca_mensal.drop(pd.Timestamp("2020-05-01"))
     df = pd.DataFrame({"data": s.index, "valor": s.values})
     r = check_lacunas_mensais(df, serie("ipca"))
-    assert r.status is Status.ALERTA and "05/2020" in r.detalhe
+    assert r.status is Status.INFORMATIVO and "05/2020" in r.detalhe
 
 
 def test_outlier_recente_detectado(ipca_mensal):
     s = ipca_mensal.copy()
     s.iloc[-3] = 9.0
     r = check_outliers(pd.DataFrame({"data": s.index, "valor": s.values}), serie("ipca"))
-    assert r.status is Status.ALERTA
+    assert r.status is Status.INFORMATIVO
 
 
 def test_reconciliacao_ipca(ipca_mensal):
@@ -100,7 +100,7 @@ def test_reconciliacao_ipca(ipca_mensal):
     corrompido = mensal.copy()
     corrompido.loc[corrompido.index[-5], "valor"] += 0.5
     r = check_reconciliacao_ipca(corrompido, oficial_df, serie("ipca_12m"))
-    assert r.status is Status.FALHA and r.valor_observado > 0.4
+    assert r.status is Status.BLOQUEANTE and r.valor_observado > 0.4
 
 
 def test_acumulado_12m_composto():

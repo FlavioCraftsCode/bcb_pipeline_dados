@@ -131,7 +131,7 @@ def test_carga_completa_incremental_e_revisao(engine):
         assert rec == "ok"
 
 
-def test_lote_invalido_vai_para_quarentena(engine):
+def test_lote_bloqueado_vai_para_quarentena(engine):
     universo = _universo()
     ruim = dict(universo)
     selic = universo["432"].copy()
@@ -139,7 +139,8 @@ def test_lote_invalido_vai_para_quarentena(engine):
     ruim["432"] = selic
     antes = consultas.serie_historica(engine, "selic", "diaria")["pontos"][-1]["valor"]
     r = executar("incremental", ["432"], gatilho="teste", engine=engine, cliente=_cliente(ruim), com_previsao=False)
-    assert r.status == "falha" and r.por_serie["432"] == "quarentena"
+    # Isolar o lote é o sistema funcionando: a execução conclui com isolamento.
+    assert r.status == "concluido_com_isolamento" and r.por_serie["432"] == "quarentena"
     consultas.CACHE._series = {}
     assert consultas.serie_historica(engine, "selic", "diaria")["pontos"][-1]["valor"] == antes
 
@@ -153,7 +154,10 @@ def test_consultas_servem_o_painel(engine):
     prev = consultas.previsao(engine)
     assert prev["disponivel"] and len(prev["previsao"]) == 12
     assert consultas.qualidade(engine)["resultados"]
-    assert consultas.execucoes(engine)["execucoes"][0]["status"] == "falha"
+    assert consultas.execucoes(engine)["execucoes"][0]["status"] == "concluido_com_isolamento"
+    q = consultas.qualidade(engine)
+    assert {r["status"] for r in q["resultados"]} <= {"ok", "informativo", "bloqueante"}
+    assert any(r["status"] == "bloqueante" and r["checagem"] == "faixa_valida" for r in q["resultados"])
     assert len(consultas.correlacoes(engine)["matriz"]) >= 4
 
 
@@ -170,4 +174,7 @@ def test_api(engine, monkeypatch):
     assert cliente.get("/api/series/ipca").status_code == 200
     assert cliente.get("/api/series/nao-existe").status_code == 404
     assert cliente.get("/api/previsao").json()["disponivel"] is True
+    ex = cliente.get("/api/execucoes").json()
+    assert ex["execucoes"][0]["status"] == "concluido_com_isolamento"
+    assert cliente.get("/api/qualidade").status_code == 200
     assert cliente.get("/openapi.json").status_code == 200
