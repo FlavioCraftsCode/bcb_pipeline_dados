@@ -24,7 +24,7 @@ um painel web.
 |---|---|
 | Engenharia de dados | Extração em janelas de 10 anos (limite do SGS), retry com backoff exponencial e *jitter*, **carga incremental com janela de revisão** e **upsert idempotente** que distingue linha nova de dado revisado pela fonte |
 | Modelagem | Star Schema (`fato_indicadores`, `dim_tempo`, `dim_indicador`) com **migrações versionadas** e marts analíticos em SQL (`mart_mensal`, `mart_juro_real`) |
-| Qualidade de dados | Sete checagens por série com severidade (ok, alerta, falha), **quarentena** de lotes reprovados e **reconciliação** do IPCA 12 meses calculado contra a série oficial |
+| Qualidade de dados | Sete checagens por série classificadas como **bloqueantes** ou **informativas**, um **Circuito de Proteção de Dados** que isola automaticamente lotes inválidos da API externa e a **reconciliação** do IPCA 12 meses calculado contra a série oficial |
 | Observabilidade | Cada execução fica registrada (`etl_execucoes`, `etl_execucoes_series`, `dq_resultados`): duração, linhas novas e revisadas, requisições HTTP e erros |
 | Ciência de dados | Previsão do IPCA com 4 modelos, **backtest walk-forward sem vazamento**, comparação com *baselines* e intervalos de previsão empíricos com cobertura medida |
 | Back-end | API REST com FastAPI e documentação OpenAPI em `/docs` |
@@ -39,7 +39,7 @@ flowchart LR
     E --> T[Transformação]
     T --> Q{Qualidade<br/>7 checagens}
     Q -->|aprovado| C[Carga<br/>upsert idempotente]
-    Q -->|falha| X[Quarentena<br/>histórico preservado]
+    Q -->|bloqueante| X[Quarentena<br/>Circuito de Proteção de Dados]
     C --> DW[(PostgreSQL<br/>Star Schema)]
     DW --> M[Marts SQL<br/>juro real, mensal]
     DW --> P[Previsão IPCA<br/>backtest walk-forward]
@@ -115,19 +115,45 @@ Extração, qualidade, carga, API e painel passam a tratá-lo sem outras mudanç
 
 ## Qualidade de dados
 
+Cada regra tem uma severidade de governança:
+
+- **Bloqueante:** o lote viola uma regra de integridade e não entra no Data Warehouse.
+- **Informativo:** a anomalia é registrada para observabilidade e o lote segue normalmente.
+
 | Checagem | Severidade | O que verifica |
 |---|---|---|
-| `nao_vazio` | falha (carga completa) | a API devolveu dados; em carga incremental, "nada novo" é normal |
-| `sem_nulos` | falha | todas as datas e valores foram convertidos |
-| `sem_duplicados` | falha | uma observação por data |
-| `faixa_valida` | falha | valores dentro da faixa plausível do indicador |
-| `atualidade` | alerta | último dado dentro do atraso esperado de divulgação |
-| `sem_lacunas` | alerta | nenhum mês faltando em séries mensais |
-| `outliers` | alerta | variações recentes com z-score robusto (mediana/MAD) acima de 8 |
-| `reconciliacao_ipca_12m` | falha | IPCA 12m recalculado a partir do mensal bate com a série oficial (tolerância de 0,05 p.p.) |
+| `nao_vazio` | Bloqueante (carga completa) | a API devolveu dados; em carga incremental, "nada novo" é normal |
+| `sem_nulos` | Bloqueante | todas as datas e valores foram convertidos |
+| `sem_duplicados` | Bloqueante | uma observação por data |
+| `faixa_valida` | Bloqueante | valores dentro da faixa plausível do indicador |
+| `reconciliacao_ipca_12m` | Bloqueante | IPCA 12m recalculado a partir do mensal bate com a série oficial (tolerância de 0,05 p.p.) |
+| `atualidade` | Informativo | último dado dentro do atraso esperado de divulgação |
+| `sem_lacunas` | Informativo | nenhum mês faltando em séries mensais |
+| `outliers` | Informativo | variações recentes com z-score robusto (mediana/MAD) acima de 8 |
 
-Uma falha põe **apenas aquela série** em quarentena: o histórico já carregado é preservado e as demais séries
-seguem. A execução termina como `sucesso`, `parcial` ou `falha`.
+### Circuito de Proteção de Dados
+
+A API do SGS é uma fonte externa: pode devolver valores corrompidos, lacunas ou ficar fora do ar. A pipeline trata
+cada série como uma unidade isolada e valida o lote **antes** de qualquer escrita no Data Warehouse.
+
+- **Isolamento automático de lotes da API externa.** Quando uma checagem bloqueante dispara, o lote daquela série
+  é barrado na origem e fica em quarentena. Nenhuma linha dele é gravada.
+- **Integridade do Data Warehouse preservada.** O histórico já carregado da série permanece intacto, e o painel e
+  a API continuam servindo a última versão validada.
+- **Continuidade das demais séries.** Um indicador isolado não impede a carga dos outros.
+- **Rastreabilidade.** Cada isolamento fica registrado em `dq_resultados` e `etl_execucoes_series`, com a regra
+  acionada e o detalhe do valor que a violou.
+
+Status registrados em cada nível (fonte única em [`src/bcb_pipeline/status.py`](src/bcb_pipeline/status.py)):
+
+| Nível | Status |
+|---|---|
+| Checagem | `ok`, `informativo`, `bloqueante` |
+| Série | `sucesso`, `quarentena` (lote isolado), `interrompida` (fonte indisponível após as novas tentativas) |
+| Execução | `sucesso`, `concluido_com_isolamento` (ao menos uma série isolada, as demais carregadas), `interrompida` (incidente operacional: a execução não chegou ao fim) |
+
+`concluido_com_isolamento` significa que o circuito funcionou como projetado. `interrompida` fica reservado a
+incidentes de infraestrutura, que continuam visíveis como tal no painel e encerram a CLI com código de saída 1.
 
 ## Previsão do IPCA
 
@@ -186,7 +212,7 @@ pytest -m "not integracao"   # unitários, sem banco nem rede
 
 Os testes de integração rodam a pipeline inteira contra um PostgreSQL real, com a API do BCB substituída por uma
 sessão falsa determinística. Eles cobrem a carga completa, a reexecução idempotente, a captura de revisões, a
-quarentena e as rotas da API:
+quarentena (isolamento pelo Circuito de Proteção de Dados) e as rotas da API:
 
 ```bash
 docker compose up -d postgres_dw
@@ -225,20 +251,21 @@ Por isso o histórico de execuções e de qualidade mostrado no painel é real, 
 ## Estrutura
 
 ```
-├── database/migrations/      # 001 (fase 1) e 002 (fase 2), aplicadas automaticamente
+├── database/migrations/      # 001 (fase 1), 002 (fase 2) e 003 (vocabulário de governança), aplicadas automaticamente
 ├── src/
 │   ├── bcb_pipeline/
 │   │   ├── config.py         # catálogo de séries e parâmetros
 │   │   ├── extracao.py       # cliente SGS: janelas, retry, incremental
 │   │   ├── transformacao.py  # formato canônico e dim_tempo
 │   │   ├── qualidade.py      # checagens e reconciliação
+│   │   ├── status.py         # vocabulário de status (checagem, série, execução)
 │   │   ├── carga.py, sql.py  # upsert no Star Schema e registros de execução
 │   │   ├── analise.py        # acumulados, juro real, correlações
 │   │   ├── previsao.py       # modelos, backtest e intervalos
 │   │   ├── consultas.py      # camada de leitura usada pela API e pela exportação
 │   │   ├── pipeline.py       # orquestração
 │   │   └── __main__.py       # CLI
-│   └── bcb_api/main.py       # FastAPI + servidor do painel
+│   └── bcb_api/              # FastAPI (main.py), contratos de resposta (schemas.py) e servidor do painel
 ├── frontend/                 # React + TypeScript + D3, build com esbuild
 ├── tests/                    # unitários e de integração
 └── .github/workflows/        # CI e pipeline diária
@@ -260,7 +287,7 @@ Por isso o histórico de execuções e de qualidade mostrado no painel é real, 
 ## Próximos passos
 
 - Expectativas do boletim Focus como regressoras da previsão
-- Orquestração com Airflow ou Dagster e alertas de qualidade por e-mail
+- Orquestração com Airflow ou Dagster e notificação de lotes isolados por e-mail
 - Camada de transformação em dbt para os marts
 
 ---
