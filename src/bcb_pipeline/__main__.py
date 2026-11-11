@@ -63,6 +63,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.comando == "executar":
         from .pipeline import executar
+        from .status import StatusExecucao
 
         resumo = executar(
             modo="completo" if args.completo else "incremental",
@@ -71,7 +72,8 @@ def main(argv: list[str] | None = None) -> int:
             com_previsao=not args.sem_previsao,
             engine=engine,
         )
-        return 0 if resumo.status in ("sucesso", "parcial") else 1
+        # Isolar lotes é comportamento esperado; só uma execução interrompida sai com erro.
+        return 1 if resumo.status is StatusExecucao.INTERROMPIDA else 0
     if args.comando == "prever":
         from .pipeline import _atualizar_previsao
 
