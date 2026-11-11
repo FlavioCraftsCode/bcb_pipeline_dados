@@ -1,0 +1,100 @@
+# Roda a pipeline todo dia e publica o painel como site estático no GitHub Pages.
+#
+# O Data Warehouse persiste entre execuções como um dump no cache do Actions:
+# cada dia restaura o banco, roda a carga *incremental* (só o que mudou),
+# exporta o snapshot JSON e salva o banco de volta. Assim o histórico de
+# execuções e de qualidade de dados exibido no painel é real.
+#
+# Para ativar: Settings -> Pages -> Source: "GitHub Actions".
+
+name: Pipeline diária + painel
+
+on:
+  schedule:
+    - cron: "17 10 * * *" # 07:17 em Brasília
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pipeline-diaria
+  cancel-in-progress: false
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: admin
+          POSTGRES_PASSWORD: securepassword
+          POSTGRES_DB: bcb_dw
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U admin -d bcb_dw"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg2://admin:securepassword@localhost:5432/bcb_dw
+      PYTHONPATH: src
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Restaurar Data Warehouse do dia anterior
+        id: cache-dw
+        uses: actions/cache/restore@v4
+        with:
+          path: dw.sql.gz
+          key: dw-${{ github.run_id }}
+          restore-keys: dw-
+
+      - name: Carregar dump
+        if: steps.cache-dw.outputs.cache-matched-key != ''
+        run: gunzip -c dw.sql.gz | docker exec -i ${{ job.services.postgres.id }} psql -q -U admin -d bcb_dw
+
+      - name: Rodar pipeline (incremental; completa se o banco estiver vazio)
+        run: python -m bcb_pipeline executar --gatilho agendado
+
+      - name: Salvar Data Warehouse
+        if: always()
+        run: docker exec ${{ job.services.postgres.id }} pg_dump -U admin -d bcb_dw --no-owner | gzip > dw.sql.gz
+
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: dw.sql.gz
+          key: dw-${{ github.run_id }}
+
+      - name: Exportar snapshot para o painel
+        run: python -m bcb_pipeline exportar --destino frontend/public/data
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build do painel (modo estático)
+        working-directory: frontend
+        run: |
+          npm install --no-audit --no-fund
+          npm run build:estatico
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/dist
+
+  deploy:
+    needs: pipeline
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
