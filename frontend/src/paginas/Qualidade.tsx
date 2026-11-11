@@ -3,17 +3,41 @@ import { Carregando, Erro, Secao, Status } from "../componentes";
 import { dataCurta, dataHora, inteiro } from "../formato";
 import type { Qualidade as TQualidade, ResultadoQualidade, StatusCheck } from "../tipos";
 
-const CHECAGENS: { chave: string; rotulo: string; explica: string }[] = [
-  { chave: "nao_vazio", rotulo: "Recebeu dados", explica: "A API devolveu linhas (ou nada novo, em carga incremental)." },
-  { chave: "sem_nulos", rotulo: "Sem nulos", explica: "Todas as datas e valores foram convertidos." },
-  { chave: "sem_duplicados", rotulo: "Sem duplicatas", explica: "Uma observação por data." },
-  { chave: "faixa_valida", rotulo: "Faixa válida", explica: "Valores dentro da faixa plausível do indicador." },
-  { chave: "atualidade", rotulo: "Atualizada", explica: "Último dado dentro do atraso esperado de divulgação." },
-  { chave: "sem_lacunas", rotulo: "Sem lacunas", explica: "Nenhum mês faltando em séries mensais." },
-  { chave: "outliers", rotulo: "Sem outliers", explica: "Variações recentes com z-score robusto (mediana/MAD) até 8." },
+type Severidade = "Bloqueante" | "Informativo";
+
+const CHECAGENS: { chave: string; rotulo: string; severidade: Severidade; explica: string }[] = [
+  {
+    chave: "nao_vazio",
+    rotulo: "Recebeu dados",
+    severidade: "Bloqueante",
+    explica: "A API devolveu linhas (ou nada novo, em carga incremental).",
+  },
+  { chave: "sem_nulos", rotulo: "Sem nulos", severidade: "Bloqueante", explica: "Todas as datas e valores foram convertidos." },
+  { chave: "sem_duplicados", rotulo: "Sem duplicatas", severidade: "Bloqueante", explica: "Uma observação por data." },
+  {
+    chave: "faixa_valida",
+    rotulo: "Faixa válida",
+    severidade: "Bloqueante",
+    explica: "Valores dentro da faixa plausível do indicador.",
+  },
+  {
+    chave: "atualidade",
+    rotulo: "Atualizada",
+    severidade: "Informativo",
+    explica: "Último dado dentro do atraso esperado de divulgação.",
+  },
+  { chave: "sem_lacunas", rotulo: "Sem lacunas", severidade: "Informativo", explica: "Nenhum mês faltando em séries mensais." },
+  {
+    chave: "outliers",
+    rotulo: "Sem outliers",
+    severidade: "Informativo",
+    explica: "Variações recentes com z-score robusto (mediana/MAD) até 8.",
+  },
 ];
 
-const PESO: Record<StatusCheck, number> = { ok: 0, alerta: 1, falha: 2 };
+const plural = (n: number, um: string, varios: string) => `${n} ${n === 1 ? um : varios}`;
+
+const PESO: Record<StatusCheck, number> = { ok: 0, informativo: 1, bloqueante: 2 };
 
 export function Qualidade() {
   const { dados, erro } = useDados<TQualidade>("qualidade");
@@ -26,7 +50,7 @@ export function Qualidade() {
     const k = r.codigo_bcb;
     porSerie.set(k, [...(porSerie.get(k) ?? []), r]);
   });
-  const contagem = { ok: 0, alerta: 0, falha: 0 } as Record<StatusCheck, number>;
+  const contagem: Record<StatusCheck, number> = { ok: 0, informativo: 0, bloqueante: 0 };
   dados.resultados.forEach((r) => (contagem[r.status] += 1));
   const atencao = dados.resultados
     .filter((r) => r.status !== "ok")
@@ -39,16 +63,20 @@ export function Qualidade() {
       <header className="cabecalho-pagina">
         <h1>Qualidade de dados</h1>
         <p className="secao-descricao">
-          Toda carga passa por estas checagens antes de entrar no Data Warehouse. Uma falha põe o lote da série em
-          quarentena: o histórico já carregado é preservado e as demais séries seguem normalmente. Execução #
-          {dados.id_execucao}, verificada em {dataHora(verificado)}.
+          Toda carga passa por estas checagens antes de entrar no Data Warehouse. Uma checagem bloqueante aciona o
+          Circuito de Proteção de Dados: o lote daquela série é isolado em quarentena na origem, o histórico já carregado
+          é preservado e as demais séries seguem normalmente. Execução #{dados.id_execucao}, verificada em{" "}
+          {dataHora(verificado)}.
         </p>
       </header>
 
       <div className="resumo-status" aria-label="Resumo das checagens">
-        <Status status="ok" rotulo={`${contagem.ok} aprovadas`} />
-        <Status status="alerta" rotulo={`${contagem.alerta} alertas`} />
-        <Status status="falha" rotulo={`${contagem.falha} falhas`} />
+        <Status status="ok" rotulo={plural(contagem.ok, "aprovada", "aprovadas")} />
+        <Status status="informativo" rotulo={plural(contagem.informativo, "informativa", "informativas")} />
+        <Status
+          status="bloqueante"
+          rotulo={plural(contagem.bloqueante, "bloqueada na origem", "bloqueadas na origem")}
+        />
       </div>
 
       <Secao titulo="Checagens por indicador" descricao="Passe o cursor sobre um ícone para ver o detalhe.">
@@ -60,6 +88,7 @@ export function Qualidade() {
                 {CHECAGENS.map((c) => (
                   <th key={c.chave} scope="col" title={c.explica}>
                     {c.rotulo}
+                    <span className="sub">{c.severidade}</span>
                   </th>
                 ))}
               </tr>
@@ -90,9 +119,12 @@ export function Qualidade() {
       </Secao>
 
       <div className="duas-colunas">
-        <Secao titulo="Pontos de atenção" descricao="Alertas e falhas da última execução, com o detalhe registrado.">
+        <Secao
+          titulo="Ocorrências registradas"
+          descricao="Checagens bloqueantes e informativas da última execução, com o detalhe registrado."
+        >
           {atencao.length === 0 ? (
-            <p>Nenhum alerta. Todas as checagens passaram.</p>
+            <p>Nenhuma ocorrência: todas as checagens foram aprovadas.</p>
           ) : (
             <ul className="lista-atencao">
               {atencao.map((r) => (
@@ -109,7 +141,7 @@ export function Qualidade() {
         </Secao>
         <Secao
           titulo="Reconciliação com a fonte oficial"
-          descricao="A pipeline recalcula o IPCA acumulado em 12 meses a partir das variações mensais e confere com a série oficial 13522. Se um único mês vier errado, o acumulado diverge."
+          descricao="Checagem bloqueante: a pipeline recalcula o IPCA acumulado em 12 meses a partir das variações mensais e confere com a série oficial 13522. Se um único mês vier errado, o acumulado diverge."
         >
           {reconc ? (
             <div className="reconciliacao">

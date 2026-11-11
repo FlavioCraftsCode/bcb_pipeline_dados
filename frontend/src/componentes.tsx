@@ -1,15 +1,19 @@
 import type { ReactNode } from "react";
-import type { StatusCheck, StatusExecucao } from "./tipos";
+import type { StatusCheck, StatusExecucao, StatusSerie } from "./tipos";
 
-type StatusQualquer = StatusCheck | StatusExecucao | "sucesso" | "quarentena";
+type StatusQualquer = StatusCheck | StatusExecucao | StatusSerie;
 
-const MAPA: Record<string, { classe: string; icone: string; rotulo: string }> = {
-  ok: { classe: "bom", icone: "✓", rotulo: "OK" },
+// Laranja para proteção ativa (lote isolado pelo Circuito de Proteção de Dados),
+// âmbar para execução concluída com isolamento, cinza para observabilidade.
+// Vermelho fica reservado a incidente operacional real (execução interrompida).
+const MAPA: Record<StatusQualquer, { classe: string; icone: string; rotulo: string }> = {
+  ok: { classe: "bom", icone: "✓", rotulo: "Aprovado" },
   sucesso: { classe: "bom", icone: "✓", rotulo: "Sucesso" },
-  alerta: { classe: "atencao", icone: "!", rotulo: "Alerta" },
-  parcial: { classe: "atencao", icone: "!", rotulo: "Parcial" },
-  quarentena: { classe: "serio", icone: "■", rotulo: "Quarentena" },
-  falha: { classe: "critico", icone: "✕", rotulo: "Falha" },
+  informativo: { classe: "info", icone: "i", rotulo: "Informativo" },
+  bloqueante: { classe: "protecao", icone: "■", rotulo: "Bloqueado na origem" },
+  quarentena: { classe: "protecao", icone: "■", rotulo: "Em quarentena" },
+  concluido_com_isolamento: { classe: "isolamento", icone: "✓", rotulo: "Concluída com isolamento" },
+  interrompida: { classe: "critico", icone: "✕", rotulo: "Interrompida" },
   executando: { classe: "neutro", icone: "…", rotulo: "Executando" },
 };
 

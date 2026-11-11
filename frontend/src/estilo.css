@@ -605,15 +605,21 @@ h2 {
 .status-bom .status-icone {
   background: var(--bom);
 }
-.status-atencao .status-icone {
+.status-critico .status-icone {
+  background: var(--critico);
+}
+.status-protecao .status-icone {
+  background: var(--serio);
+}
+.status-isolamento .status-icone {
   background: var(--atencao);
   color: #0b0b0b;
 }
-.status-serio .status-icone {
-  background: var(--serio);
-}
-.status-critico .status-icone {
-  background: var(--critico);
+.status-info .status-icone {
+  background: var(--texto-2);
+  color: var(--superficie);
+  font-style: italic;
+  font-family: var(--serifa);
 }
 .status-neutro .status-icone {
   background: var(--mudo);
@@ -875,7 +881,7 @@ h2 {
 }
 .lista-atencao li {
   display: grid;
-  grid-template-columns: 110px 1fr;
+  grid-template-columns: max-content 1fr;
   gap: 12px;
   padding: 10px 0;
   border-bottom: 1px solid var(--linha);

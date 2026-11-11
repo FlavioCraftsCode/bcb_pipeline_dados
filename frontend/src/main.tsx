@@ -10,6 +10,7 @@ import { Previsao } from "./paginas/Previsao";
 import { Qualidade } from "./paginas/Qualidade";
 import { VisaoGeral } from "./paginas/VisaoGeral";
 import "./estilo.css";
+import type { StatusExecucao } from "./tipos";
 
 const PAGINAS = [
   { rota: "visao-geral", rotulo: "Visão geral", Componente: VisaoGeral },
@@ -20,7 +21,7 @@ const PAGINAS = [
 ] as const;
 
 interface Saude {
-  ultima_execucao: { id: number; status: "sucesso" | "parcial" | "falha" | "executando"; finalizado_em: string | null } | null;
+  ultima_execucao: { id: number; status: StatusExecucao; finalizado_em: string | null } | null;
 }
 
 function SeloAtualizacao() {

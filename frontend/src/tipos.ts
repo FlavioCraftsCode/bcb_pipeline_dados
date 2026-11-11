@@ -89,7 +89,8 @@ export interface Previsao {
   historico?: { data: string; ipca: number | null; ipca_12m: number | null }[];
 }
 
-export type StatusCheck = "ok" | "alerta" | "falha";
+// Vocabulário de governança (espelha bcb_pipeline/status.py).
+export type StatusCheck = "ok" | "informativo" | "bloqueante";
 
 export interface ResultadoQualidade {
   codigo_bcb: string;
@@ -117,10 +118,12 @@ export interface Qualidade {
   id_execucao: number | null;
   resultados: ResultadoQualidade[];
   frescor: Frescor[];
-  historico?: { id_execucao: number; ok: number; alerta: number; falha: number }[];
+  historico?: { id_execucao: number; ok: number; informativo: number; bloqueante: number }[];
 }
 
-export type StatusExecucao = "executando" | "sucesso" | "parcial" | "falha";
+export type StatusExecucao = "executando" | "sucesso" | "concluido_com_isolamento" | "interrompida";
+
+export type StatusSerie = "sucesso" | "quarentena" | "interrompida";
 
 export interface Execucao {
   id_execucao: number;
@@ -141,7 +144,7 @@ export interface ExecucaoSerie {
   id_execucao: number;
   codigo_bcb: string;
   slug: string | null;
-  status: "sucesso" | "quarentena" | "falha";
+  status: StatusSerie;
   desde: string | null;
   linhas_extraidas: number;
   linhas_inseridas: number;

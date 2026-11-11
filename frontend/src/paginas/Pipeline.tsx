@@ -6,7 +6,10 @@ import type { Execucoes } from "../tipos";
 const ETAPAS = [
   { titulo: "Extração", texto: "API SGS do Banco Central em janelas de 10 anos, com retry e backoff exponencial." },
   { titulo: "Transformação", texto: "Tipagem, datas, padronização e dimensão de calendário em português." },
-  { titulo: "Qualidade", texto: "Sete checagens por série e reconciliação do IPCA. Lote reprovado vai para quarentena." },
+  {
+    titulo: "Qualidade",
+    texto: "Sete checagens por série e reconciliação do IPCA. Lote bloqueado é isolado em quarentena na origem.",
+  },
   { titulo: "Carga", texto: "Upsert idempotente no Star Schema do PostgreSQL, registrando revisões da fonte." },
   { titulo: "Análise e previsão", texto: "Marts mensais, juro real, correlações e previsão do IPCA com backtest." },
   { titulo: "Entrega", texto: "API REST com FastAPI e este painel, também publicado como site estático." },
@@ -28,7 +31,9 @@ export function Pipeline() {
   if (!dados) return <Carregando />;
   const ultima = dados.execucoes[0];
   const ultimas = dados.execucoes.slice(0, 30);
-  const taxa = ultimas.filter((e) => e.status === "sucesso").length / Math.max(1, ultimas.length);
+  const concluidas = ultimas.filter((e) => e.status === "sucesso" || e.status === "concluido_com_isolamento");
+  const comIsolamento = ultimas.filter((e) => e.status === "concluido_com_isolamento").length;
+  const taxa = concluidas.length / Math.max(1, ultimas.length);
 
   return (
     <>
@@ -36,7 +41,8 @@ export function Pipeline() {
         <h1>Pipeline de dados</h1>
         <p className="secao-descricao">
           Roda todo dia de forma incremental: busca apenas o trecho recente de cada série (com uma janela de revisão,
-          porque o IBGE e o BCB revisam dados passados) e grava só o que mudou.
+          porque o IBGE e o BCB revisam dados passados) e grava só o que mudou. Cada série é processada de forma
+          isolada: um lote bloqueado ou uma fonte indisponível não impede a carga das demais.
         </p>
       </header>
 
@@ -73,9 +79,11 @@ export function Pipeline() {
             <span className="kpi-nota">de {inteiro(ultima.linhas_extraidas)} linhas extraídas</span>
           </div>
           <div>
-            <span className="kpi-rotulo">Taxa de sucesso</span>
+            <span className="kpi-rotulo">Execuções concluídas</span>
             <span className="kpi-valor">{num(taxa * 100, 0)}%</span>
-            <span className="kpi-nota">nas últimas {ultimas.length} execuções</span>
+            <span className="kpi-nota">
+              das últimas {ultimas.length}; {comIsolamento} com isolamento de lotes
+            </span>
           </div>
         </div>
       )}
