@@ -1,17 +1,45 @@
-version: '3.8'
-
+# docker compose up --build   -> sobe o DW, roda a pipeline uma vez e serve o painel em http://localhost:8000
 services:
   postgres_dw:
-    image: postgres:15-alpine
+    image: postgres:15-alpine  # mesma versão da fase 1: o volume pgdata existente continua válido
     container_name: bcb_data_warehouse
     environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: securepassword
-      POSTGRES_DB: bcb_dw
+      POSTGRES_USER: ${POSTGRES_USER:-admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-securepassword}
+      POSTGRES_DB: ${POSTGRES_DB:-bcb_dw}
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-admin} -d ${POSTGRES_DB:-bcb_dw}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Executa a pipeline (incremental) e termina. Rode de novo com:
+  #   docker compose run --rm etl
+  etl:
+    build: .
+    command: ["python", "-m", "bcb_pipeline", "executar", "--gatilho", "docker"]
+    environment: &ambiente
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-admin}:${POSTGRES_PASSWORD:-securepassword}@postgres_dw:5432/${POSTGRES_DB:-bcb_dw}
+      LOG_LEVEL: INFO
+    depends_on:
+      postgres_dw:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: .
+    environment: *ambiente
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres_dw:
+        condition: service_healthy
+      etl:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:
