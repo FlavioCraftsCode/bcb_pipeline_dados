@@ -2,11 +2,11 @@ import { useMemo, useState } from "react";
 import { useDados } from "../api";
 import { Carregando, Erro, Secao, Segmentado } from "../componentes";
 import { corSerie } from "../cores";
-import { delta, mesAno, mesAnoLongo, num, paraData } from "../formato";
+import { dataCurta, delta, mesAno, mesAnoLongo, num, paraData } from "../formato";
 import { Faisca } from "../graficos/Faisca";
 import { GraficoLinhas, type PontoXY } from "../graficos/GraficoLinhas";
 import { MapaCalor } from "../graficos/MapaCalor";
-import type { Correlacoes, Indicador, Painel, Previsao } from "../tipos";
+import type { Correlacoes, Destaques, Indicador, MetaInflacao, Painel, Previsao } from "../tipos";
 
 type Janela = "5" | "10" | "tudo";
 
@@ -136,11 +136,93 @@ function PrevisaoResumo({ previsao }: { previsao: Previsao }) {
   );
 }
 
+const SITUACAO_META: Record<MetaInflacao["situacao"], string> = {
+  dentro: "dentro da banda de tolerância",
+  acima: "acima do teto da banda de tolerância",
+  abaixo: "abaixo do piso da banda de tolerância",
+};
+
+function TermometroMeta({ meta }: { meta: MetaInflacao }) {
+  const max = Math.max(7, Math.ceil(meta.ipca_12m + 1));
+  const min = Math.min(0, Math.floor(meta.ipca_12m - 1));
+  const pct = (v: number) => Math.min(100, Math.max(0, ((v - min) / (max - min)) * 100));
+  const fora = meta.meses_consecutivos_fora;
+  return (
+    <>
+      <p className="destaque-numero">
+        {num(meta.ipca_12m, 2)}%
+        <span>
+          IPCA em 12 meses ({mesAnoLongo(meta.data)}), {SITUACAO_META[meta.situacao]}: {delta(meta.desvio_pp, 2)} p.p.
+          em relação à meta de {num(meta.meta, 1)}%.
+        </span>
+      </p>
+      <div
+        className="meta-trilho"
+        role="img"
+        aria-label={`IPCA em 12 meses de ${num(meta.ipca_12m, 2)}%. Meta de ${num(meta.meta, 1)}% com banda de ${num(meta.piso, 1)}% a ${num(meta.teto, 1)}%.`}
+      >
+        <span className="meta-banda" style={{ left: `${pct(meta.piso)}%`, width: `${pct(meta.teto) - pct(meta.piso)}%` }} />
+        <span className="meta-alvo" style={{ left: `${pct(meta.meta)}%` }} />
+        <span className={`meta-marcador ${meta.situacao}`} style={{ left: `${pct(meta.ipca_12m)}%` }} />
+      </div>
+      <ul className="meta-escala" aria-hidden="true">
+        <li style={{ left: `${pct(meta.piso)}%` }}>{num(meta.piso, 1)}%</li>
+        <li style={{ left: `${pct(meta.meta)}%` }}>meta {num(meta.meta, 1)}%</li>
+        <li style={{ left: `${pct(meta.teto)}%` }}>{num(meta.teto, 1)}%</li>
+      </ul>
+      <p className="nota-pequena">
+        {fora > 0
+          ? `Fora da banda há ${fora} ${fora === 1 ? "mês consecutivo" : "meses consecutivos"}; o descumprimento formal da meta exige ${meta.meses_para_descumprimento}.`
+          : "Dentro da banda no último mês."}
+      </p>
+    </>
+  );
+}
+
+function DecisoesCopom({ selic }: { selic: NonNullable<Destaques["selic"]> }) {
+  const { decisoes } = selic;
+  return (
+    <>
+      <p className="destaque-numero">
+        {num(selic.atual, 2)}%
+        <span>
+          meta Selic vigente
+          {decisoes.length > 0
+            ? `, sem mudança há ${selic.dias_desde_ultima_mudanca} ${selic.dias_desde_ultima_mudanca === 1 ? "dia" : "dias"}`
+            : ""}
+          .
+        </span>
+      </p>
+      {decisoes.length > 0 ? (
+        <ol className="decisoes" aria-label="Últimas mudanças da meta Selic">
+          {decisoes.slice(0, 6).map((d) => (
+            <li key={d.data}>
+              <time dateTime={d.data}>{dataCurta(d.data)}</time>
+              <span className={`decisao-delta ${d.variacao_pp > 0 ? "sobe" : "desce"}`}>
+                <span aria-hidden="true">{d.variacao_pp > 0 ? "▲" : "▼"} </span>
+                {delta(d.variacao_pp, 2)} p.p.
+              </span>
+              <span className="decisao-faixa">
+                {num(d.de, 2)}% → {num(d.para, 2)}%
+              </span>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="nota-pequena">Nenhuma mudança registrada no histórico carregado.</p>
+      )}
+      <p className="nota-pequena">Datas de início de vigência da nova meta, conforme a série 432 do SGS.</p>
+    </>
+  );
+}
+
 export function VisaoGeral() {
   const painel = useDados<Painel>("painel");
   const indicadores = useDados<Indicador[]>("indicadores");
   const previsao = useDados<Previsao>("previsao");
   const correl = useDados<Correlacoes>("correlacoes");
+  // Opcional: snapshots antigos podem não ter /destaques; nesse caso a seção some em silêncio.
+  const destaques = useDados<Destaques>("destaques");
   const [janela, setJanela] = useState<Janela>("10");
 
   const hero = useMemo(() => {
@@ -158,7 +240,9 @@ export function VisaoGeral() {
     return { selic, ipca, selicComum, ipcaComum: ipca.filter((d) => datasSelic.has(d.x.getTime())) };
   }, [painel.dados, janela]);
 
-  if (painel.erro) return <Erro mensagem={painel.erro} />;
+  const blocos = destaques.dados;
+
+  if (painel.erro) return <Erro mensagem={painel.erro} aoTentar={painel.recarregar} />;
   if (!painel.dados || !hero) return <Carregando />;
 
   return (
@@ -207,6 +291,21 @@ export function VisaoGeral() {
       </section>
 
       {indicadores.dados && <Instrumentos indicadores={indicadores.dados} />}
+
+      {blocos && (blocos.meta_inflacao || blocos.selic) && (
+        <div className="duas-colunas igual">
+          {blocos.meta_inflacao && (
+            <Secao titulo="A inflação frente à meta" descricao="Meta contínua de 3% com tolerância de 1,5 ponto percentual.">
+              <TermometroMeta meta={blocos.meta_inflacao} />
+            </Secao>
+          )}
+          {blocos.selic && (
+            <Secao titulo="Decisões do Copom" descricao="Mudanças recentes da meta Selic.">
+              <DecisoesCopom selic={blocos.selic} />
+            </Secao>
+          )}
+        </div>
+      )}
 
       <div className="duas-colunas">
         <Secao titulo="Para onde vai a inflação" descricao="Previsão do modelo com melhor desempenho no backtest.">

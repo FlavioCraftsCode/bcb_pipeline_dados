@@ -1037,6 +1037,106 @@ h2 {
   }
 }
 
+/* ------------------------------------------------------ destaques (meta e Copom) */
+.duas-colunas.igual {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.nota-pequena {
+  margin: 10px 0 0;
+  font-size: 0.8125rem;
+  color: var(--mudo);
+}
+.meta-trilho {
+  position: relative;
+  height: 14px;
+  margin: 22px 0 6px;
+  border-radius: 7px;
+  background: var(--grade);
+}
+.meta-banda {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 7px;
+  background: var(--acento-suave);
+  box-shadow: inset 0 0 0 1px var(--acento);
+}
+.meta-alvo {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--acento);
+}
+.meta-marcador {
+  position: absolute;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  border-radius: 50%;
+  border: 3px solid var(--superficie);
+  background: var(--bom);
+}
+.meta-marcador.acima,
+.meta-marcador.abaixo {
+  background: var(--serio);
+}
+.meta-escala {
+  position: relative;
+  height: 18px;
+  margin: 0 0 4px;
+  padding: 0;
+  list-style: none;
+  font-size: 0.75rem;
+  color: var(--mudo);
+}
+.meta-escala li {
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.decisoes {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+}
+.decisoes li {
+  display: grid;
+  grid-template-columns: 7.5rem 1fr auto;
+  gap: 12px;
+  align-items: baseline;
+  padding: 8px 0;
+  border-top: 1px solid var(--linha);
+  font-size: 0.9375rem;
+}
+.decisoes time {
+  color: var(--texto-2);
+}
+.decisao-delta {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.decisao-faixa {
+  color: var(--mudo);
+  font-variant-numeric: tabular-nums;
+}
+.erro .botao-texto {
+  margin-top: 8px;
+}
+@media (max-width: 860px) {
+  .duas-colunas.igual {
+    grid-template-columns: 1fr;
+  }
+  .decisoes li {
+    grid-template-columns: 6.5rem 1fr;
+  }
+  .decisao-faixa {
+    grid-column: 1 / -1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation: none !important;

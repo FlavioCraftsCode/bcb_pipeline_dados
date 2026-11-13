@@ -73,12 +73,17 @@ export function Carregando({ texto = "Carregando dados" }: { texto?: string }) {
   );
 }
 
-export function Erro({ mensagem }: { mensagem: string }) {
+export function Erro({ mensagem, aoTentar }: { mensagem: string; aoTentar?: () => void }) {
   return (
     <div className="erro" role="alert">
       <strong>Não foi possível carregar esta seção.</strong>
       <p>{mensagem}</p>
       <p>Confira se a API está no ar (`uvicorn bcb_api.main:app`) e se a pipeline já rodou ao menos uma vez.</p>
+      {aoTentar && (
+        <button type="button" className="botao-texto" onClick={aoTentar}>
+          Tentar novamente
+        </button>
+      )}
     </div>
   );
 }

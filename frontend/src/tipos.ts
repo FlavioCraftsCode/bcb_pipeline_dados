@@ -162,3 +162,27 @@ export interface Meta {
   gerado_em: string;
   modo: string;
 }
+
+export interface DecisaoSelic {
+  data: string;
+  de: number;
+  para: number;
+  variacao_pp: number;
+}
+
+export interface MetaInflacao {
+  data: string;
+  ipca_12m: number;
+  meta: number;
+  piso: number;
+  teto: number;
+  desvio_pp: number;
+  situacao: "dentro" | "acima" | "abaixo";
+  meses_consecutivos_fora: number;
+  meses_para_descumprimento: number;
+}
+
+export interface Destaques {
+  selic: { data: string; atual: number | null; dias_desde_ultima_mudanca: number; decisoes: DecisaoSelic[] } | null;
+  meta_inflacao: MetaInflacao | null;
+}

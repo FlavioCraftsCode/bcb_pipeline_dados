@@ -93,7 +93,7 @@ export function Indicadores() {
     return todos.filter((p) => p.x >= desde && p.y !== null);
   }, [serie.dados, slug, transf, janela]);
 
-  if (lista.erro) return <Erro mensagem={lista.erro} />;
+  if (lista.erro) return <Erro mensagem={lista.erro} aoTentar={lista.recarregar} />;
   if (!lista.dados) return <Carregando />;
 
   const casas = ind?.casas_decimais ?? 2;
@@ -158,7 +158,7 @@ export function Indicadores() {
 
           <div className={serie.carregando && pontos.length ? "atualizando" : undefined}>
             {serie.erro ? (
-              <Erro mensagem={serie.erro} />
+              <Erro mensagem={serie.erro} aoTentar={serie.recarregar} />
             ) : pontos.length ? (
               <GraficoLinhas
                 altura={360}

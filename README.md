@@ -243,10 +243,13 @@ Por isso o histórico de execuções e de qualidade mostrado no painel é real, 
 | `GET /api/series/{slug}?frequencia=mensal\|diaria&desde=aaaa-mm-dd` | série histórica |
 | `GET /api/painel` | painel mensal com juro real, acumulados e variações em 12 meses |
 | `GET /api/correlacoes` | matriz de correlação de Spearman |
+| `GET /api/destaques?limite=8` | últimas mudanças da meta Selic e posição do IPCA em 12 meses frente à banda da meta de inflação |
 | `GET /api/previsao` | previsão do IPCA, intervalos e métricas do backtest |
 | `GET /api/qualidade` | resultados de qualidade da última execução e frescor das séries |
 | `GET /api/execucoes` | histórico de execuções da pipeline |
-| `GET /api/saude` | verificação de banco e última execução |
+| `GET /api/saude` | verificação de banco e última execução (sempre `no-store`) |
+
+Datas inválidas em `desde` devolvem 422 (e não 500). As demais leituras saem com `Cache-Control: public, max-age=60`.
 
 ## Estrutura
 
