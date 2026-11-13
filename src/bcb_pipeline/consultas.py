@@ -16,7 +16,14 @@ from threading import Lock
 import pandas as pd
 from sqlalchemy import Engine, text
 
-from .analise import matriz_correlacao, painel_mensal, para_mensal, resumo_indicador
+from .analise import (
+    decisoes_selic,
+    matriz_correlacao,
+    painel_mensal,
+    para_mensal,
+    resumo_indicador,
+    situacao_meta_inflacao,
+)
 from .config import SERIES, Periodicidade, serie
 
 COLUNAS_PAINEL = {
@@ -161,6 +168,26 @@ def correlacoes(engine: Engine, desde: str = "2012-01-01") -> dict:
         "variaveis": list(m.columns),
         "matriz": [[_limpo(v) for v in linha] for linha in m.to_numpy()],
     }
+
+
+def destaques(engine: Engine, limite_decisoes: int = 8) -> dict:
+    """Sinais de leitura rápida: decisões recentes da Selic e IPCA frente à meta."""
+    dados = carregar_series(engine)
+    selic = dados.get("selic")
+    bloco_selic = None
+    if selic is not None and not selic.dropna().empty:
+        s = selic.dropna().sort_index()
+        decisoes = decisoes_selic(s, limite_decisoes)
+        ultima_data = s.index[-1]
+        desde = pd.Timestamp(decisoes[0]["data"]) if decisoes else s.index[0]
+        bloco_selic = {
+            "data": ultima_data.date().isoformat(),
+            "atual": _limpo(s.iloc[-1]),
+            "dias_desde_ultima_mudanca": int((ultima_data - desde).days),
+            "decisoes": decisoes,
+        }
+    meta = situacao_meta_inflacao(painel_mensal(dados).get("ipca_12m", pd.Series(dtype=float)))
+    return {"selic": bloco_selic, "meta_inflacao": meta}
 
 
 def previsao(engine: Engine) -> dict:

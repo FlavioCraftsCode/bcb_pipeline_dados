@@ -98,3 +98,70 @@ def resumo_indicador(s: pd.Series, periodicidade: str) -> dict:
         "observacoes": int(len(s)),
         "periodicidade": periodicidade,
     }
+
+
+# ------------------------------------------------------------------ destaques
+# Regime de meta contínua (desde 2025): meta de 3,0% com tolerância de ±1,5 p.p.
+META_INFLACAO_PCT = 3.0
+TOLERANCIA_META_PP = 1.5
+MESES_PARA_DESCUMPRIMENTO = 6
+
+
+def decisoes_selic(selic: pd.Series, limite: int = 8) -> list[dict]:
+    """Mudanças da meta Selic (das mais recentes para as mais antigas).
+
+    A série do SGS é diária e só muda quando o Copom altera a meta, então cada
+    variação do valor marca o início da vigência de uma nova meta.
+    """
+    s = selic.dropna().sort_index()
+    if len(s) < 2:
+        return []
+    anterior = s.shift(1)
+    mudou = (s - anterior).abs() > 1e-9
+    mudancas = s[mudou]
+    saida = [
+        {
+            "data": dt.date().isoformat(),
+            "de": float(anterior.loc[dt]),
+            "para": float(valor),
+            "variacao_pp": round(float(valor - anterior.loc[dt]), 4),
+        }
+        for dt, valor in mudancas.items()
+    ]
+    return saida[::-1][:limite]
+
+
+def situacao_meta_inflacao(
+    ipca_12m: pd.Series,
+    meta: float = META_INFLACAO_PCT,
+    tolerancia: float = TOLERANCIA_META_PP,
+) -> dict | None:
+    """Posiciona o IPCA acumulado em 12 meses frente à banda da meta de inflação."""
+    s = ipca_12m.dropna().sort_index()
+    if s.empty:
+        return None
+    piso, teto = meta - tolerancia, meta + tolerancia
+    valor = float(s.iloc[-1])
+    if valor > teto:
+        situacao = "acima"
+    elif valor < piso:
+        situacao = "abaixo"
+    else:
+        situacao = "dentro"
+    fora = (s > teto) | (s < piso)
+    consecutivos = 0
+    for f in reversed(fora.tolist()):
+        if not f:
+            break
+        consecutivos += 1
+    return {
+        "data": s.index[-1].date().isoformat(),
+        "ipca_12m": valor,
+        "meta": meta,
+        "piso": piso,
+        "teto": teto,
+        "desvio_pp": round(valor - meta, 4),
+        "situacao": situacao,
+        "meses_consecutivos_fora": consecutivos,
+        "meses_para_descumprimento": MESES_PARA_DESCUMPRIMENTO,
+    }

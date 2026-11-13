@@ -9,10 +9,11 @@ Documentação interativa (OpenAPI) em ``/docs``.
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
@@ -36,6 +37,22 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET"], allow_headers=["*"])
 
 
+@app.middleware("http")
+async def cabecalhos_de_cache(request: Request, call_next):
+    """Respostas de leitura podem ser reaproveitadas por navegadores e CDNs por 1 minuto.
+
+    ``/api/saude`` fica de fora: é o que um monitor consulta para saber o estado real.
+    """
+    resposta = await call_next(request)
+    caminho = request.url.path
+    if request.method == "GET" and caminho.startswith("/api/") and resposta.status_code == 200:
+        if caminho == "/api/saude":
+            resposta.headers["Cache-Control"] = "no-store"
+        else:
+            resposta.headers.setdefault("Cache-Control", "public, max-age=60, stale-while-revalidate=300")
+    return resposta
+
+
 def _engine():
     return obter_engine()
 
@@ -54,21 +71,31 @@ def indicadores():
 def serie(
     slug: str,
     frequencia: Literal["mensal", "diaria"] = "mensal",
-    desde: str | None = Query(None, description="Data inicial ISO (aaaa-mm-dd)"),
+    desde: date | None = Query(None, description="Data inicial ISO (aaaa-mm-dd)"),
 ):
     if slug not in SERIES_POR_SLUG:
         raise HTTPException(404, f"Indicador '{slug}' não existe. Opções: {', '.join(SERIES_POR_SLUG)}")
-    return consultas.serie_historica(_engine(), slug, frequencia, desde)
+    return consultas.serie_historica(_engine(), slug, frequencia, desde.isoformat() if desde else None)
 
 
 @app.get("/api/painel", tags=["análise"], summary="Painel mensal com métricas derivadas")
-def painel(desde: str = "2000-01-01"):
-    return consultas.painel(_engine(), desde)
+def painel(desde: date = date(2000, 1, 1)):
+    return consultas.painel(_engine(), desde.isoformat())
 
 
 @app.get("/api/correlacoes", tags=["análise"], summary="Correlação de Spearman entre indicadores")
-def correlacoes(desde: str = "2012-01-01"):
-    return consultas.correlacoes(_engine(), desde)
+def correlacoes(desde: date = date(2012, 1, 1)):
+    return consultas.correlacoes(_engine(), desde.isoformat())
+
+
+@app.get(
+    "/api/destaques",
+    tags=["análise"],
+    summary="Decisões recentes da Selic e situação do IPCA frente à meta de inflação",
+    response_model=schemas.Destaques,
+)
+def destaques(limite: int = Query(8, ge=1, le=50, description="Quantas mudanças da Selic devolver")):
+    return consultas.destaques(_engine(), limite)
 
 
 @app.get("/api/previsao", tags=["análise"], summary="Previsão do IPCA e métricas do backtest")

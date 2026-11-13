@@ -7,6 +7,8 @@ na documentação da API.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from bcb_pipeline.status import StatusCheck, StatusExecucao, StatusSerie
@@ -94,3 +96,34 @@ class Saude(BaseModel):
     status: str
     banco: str
     ultima_execucao: UltimaExecucao | None = None
+
+
+class DecisaoSelic(BaseModel):
+    data: str = Field(description="Início da vigência da nova meta (aaaa-mm-dd)")
+    de: float
+    para: float
+    variacao_pp: float
+
+
+class DestaqueSelic(BaseModel):
+    data: str
+    atual: float | None
+    dias_desde_ultima_mudanca: int
+    decisoes: list[DecisaoSelic]
+
+
+class MetaInflacao(BaseModel):
+    data: str
+    ipca_12m: float
+    meta: float
+    piso: float
+    teto: float
+    desvio_pp: float
+    situacao: Literal["dentro", "acima", "abaixo"]
+    meses_consecutivos_fora: int
+    meses_para_descumprimento: int
+
+
+class Destaques(BaseModel):
+    selic: DestaqueSelic | None = None
+    meta_inflacao: MetaInflacao | None = None

@@ -32,6 +32,7 @@ def exportar(engine: Engine, destino: Path) -> list[str]:
         "indicadores": consultas.indicadores(engine),
         "painel": consultas.painel(engine),
         "correlacoes": consultas.correlacoes(engine),
+        "destaques": consultas.destaques(engine),
         "previsao": consultas.previsao(engine),
         "qualidade": consultas.qualidade(engine),
         "execucoes": consultas.execucoes(engine),
